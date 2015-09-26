@@ -1,0 +1,924 @@
+%{
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdarg.h>
+#include <netinet/ip6.h>
+#include <net/if.h>
+#include "config.h"
+
+#if 1
+#define TRACE       yydbg("++ %d\n", __LINE__);
+#else
+#define TRACE
+#endif
+
+extern FILE *yyin;
+
+int yylex(void);
+void yydbg(const char *fmt, ...);
+void yyerror(const char *fmt, ...);
+
+int pgen_yy_debug = 1;
+
+static LIST_HEAD(cf_pkts);
+static struct pgen_conf cf_gene;
+
+/**
+ * these get_xxx function alway current "current" instance (the last entry),
+ * which is under parsing.
+ */
+
+static inline struct packet *get_packet(void)
+{
+    if (list_empty(&cf_pack_list))
+        return NULL;
+
+    return list_last_entry(&cf_pack_list, struct packet, pk_node);
+}
+
+static inline struct ethhdr *get_eth_header(void)
+{
+    struct packet *pkt;
+
+    if ((pkt = get_packet()) == NULL)
+        return NULL;
+    return pkt->pk_ethhdr;
+}
+
+static inline struct ip6_info *get_ip6_info(void)
+{
+    struct packet *pkt;
+
+    if ((pkt = get_packet()) == NULL)
+        return NULL;
+    return pkt->pk_ip6info;;
+}
+
+static inline struct udphdr *get_udp_header(void)
+{
+    struct packet *pkt;
+
+    if ((pkt = get_packet()) == NULL)
+        return NULL;
+    return pkt->pk_udphdr;;
+}
+
+static inline struct dh6_info *get_dhcp6_info(void)
+{
+    struct packet *pkt;
+
+    if ((pkt = get_packet()) == NULL)
+        return NULL;
+    return pkt->pk_dh6info;;
+}
+
+static inline int add_dhcp6_opt_info(void)
+{
+    struct dh6_info *dh6i;
+    struct dh6opt_info *opti;
+
+    if ((dh6i = get_dhcp6_info()) != 0)
+        return -1;
+
+    if ((opti = calloc(1, sizeof(struct dh6opt_info))) == NULL)
+        return -1;
+
+    list_add_tail(&opti->node, &dh6i->opt_list);
+    return 0;
+}
+
+static inline struct dh6opt_info *get_dhcp6_opt_info(dh6_opt_t type)
+{
+    struct dh6_info *dh6i;
+    struct dh6opt_info *opti;
+
+    if ((dh6i = get_dhcp6_info()) != 0)
+        return NULL;
+
+    list_for_each_entry(opti, &dh6i->opt_list, node)
+        if (opti->type == type)
+            return opti;
+
+    return NULL;
+}
+
+static inline int add_dhcp6_ia_info(dh6_opt_t type)
+{
+    struct dh6opt_info *opti;
+    struct dh6ia_info *iai;
+
+    if ((opti = get_dhcp6_opt_info(DH6OPT_IA_NA)) == NULL)
+        return -1;
+
+    if ((iai = calloc(1, sizeof(struct dh6ia_info))) == NULL)
+        return -1;
+
+    iai->opt = type;
+    INIT_LIST_HEAD(&iai->opt_list);
+    switch (type) {
+    case DH6OPT_IA_NA:
+        list_add_tail(&iai->node, &opti->opt.iana_list);
+        break;
+    case DH6OPT_IA_PD:
+        list_add_tail(&iai->node, &opti->opt.iapd_list);
+        break;
+    default:
+        yyerror("parser: %d: unknow IA type: %d\n", __LINE__, type);
+        free(iai);
+        return -1;
+    }
+
+    return 0;
+}
+
+static inline struct dh6ia_info *get_dhcp6_ia_info(dh6_opt_t type)
+{
+    struct dh6opt_info *opti;
+    struct list_head *list;
+
+    if ((opti = get_dhcp6_opt_info(type)) == NULL)
+        return NULL;
+
+    switch (type) {
+    case DH6OPT_IA_NA:
+        list = &opti->opt.iana_list;
+        break;
+    case DH6OPT_IA_PD:
+        list = &opti->opt.iapd_list;
+        break;
+    default:
+        yyerror("parser: %d: unknow IA type: %d\n", __LINE__, type);
+        return NULL;
+    }
+
+    if (list_empty(list))
+        return NULL;
+    return list_last_entry(list, struct dh6ia_info, node);
+}
+
+static inline struct dh6opt_info *get_dhcp6_ia_opt(dh6_opt_t iatype, dh6_opt_t subopt)
+{
+    struct dh6ia_info *iai;
+    struct dh6opt_info *opt;
+
+    if ((iai = get_dhcp6_ia_info(iatype)) == NULL)
+        return NULL;
+
+    list_for_each_entry(opt, &iai->opt_list, node) {
+        if (opt->type == subopt)
+            return opt;
+    }
+
+    return NULL;
+}
+
+%}
+
+%token BCL ECL EOS
+
+%token OPTION PACKET PROTOCOL INTERFACE
+%token ETHER IPV6 UDP TCP DHCPV6 DH6TYPE ADDRESS TIME
+%token SRCMAC DSTMAC ETHTYPE SRCADDR DSTADDR SRCPORT DSTPORT CHKSUM
+%token TRAFCLASS FLOWLABEL NEXTHEADER HOPLIMIT
+%token IANA SERVID CLNTID PREFERENCE IAID T1 T2 IAADDR
+%token PRFLFT VLDLFT CODE MESSAGE DUIDTYPE HWTYPE LLADDR XID STATUSCODE
+
+%token V_UINT V_HEX V_STR V_ETHTYPE V_HWTYPE V_IPPROT V_PORT
+%token V_ADDR6 V_MAC V_DH6TYPE V_DH6STATUSCODE V_DUIDTYPE
+
+%union {
+    int v_uint;
+    char *v_str; // TODO: free
+    unsigned char v_mac[6];
+    struct in6_addr v_addr6;
+}
+
+%type <v_uint> V_UINT V_HEX V_DH6TYPE V_DH6STATUSCODE V_DUIDTYPE V_ETHTYPE V_HWTYPE V_IPPROT V_PORT
+%type <v_str> V_STR
+%type <v_addr6> V_ADDR6
+%type <v_mac> V_MAC
+
+%%
+
+statements:
+        /* empty */ { TRACE; }
+    |   statements statement    {TRACE;}
+    ;
+
+statement:
+        option_statement { TRACE; }
+    |   packet_statement
+        {
+            TRACE;
+        }
+    ;
+
+option_statement:
+        OPTION INTERFACE V_STR EOS
+        {
+            TRACE;
+            cf_conf.ifindex = if_nametoindex($3);
+            yydbg("%d: config interface: %d %s\n", __LINE__, cf_conf.ifindex, $3);
+        }
+    ;
+
+packet_statement:
+        PACKET BCL protocols ECL EOS
+        {
+            TRACE;
+            struct packet *pkt;
+
+            if ((pkt = calloc(1, sizeof(struct packet))) == NULL) {
+                yyerror("parser: %d: no memory\n", __LINE__);
+                return -1;
+            }
+
+            list_add_tail(&pkt->pk_node, &cf_pack_list);
+            yydbg("%d: new packet{} added\n", __LINE__);
+        }
+    ;
+
+protocols:
+        /* empty */ { TRACE; }
+    |   protocols protocol { TRACE; }
+    ;
+
+protocol:
+        PROTOCOL ETHER BCL eth_fields ECL EOS 
+        {
+            TRACE; 
+            struct packet *pkt;
+
+            if ((pkt = get_packet()) == NULL) {
+                yyerror("parser: %d: fail to get packet{}\n", __LINE__);
+                return -1;
+            }
+
+            if ((pkt->pk_ethhdr = calloc(1, sizeof(struct ethhdr))) == NULL) {
+                yyerror("parser: %d: no memory\n", __LINE__);
+                return -1;
+            }
+
+            yydbg("%d: ethernet header alloced\n", __LINE__);
+        }
+    |   PROTOCOL IPV6 BCL ipv6_fields ECL EOS { TRACE; }
+        {
+            TRACE; 
+            struct packet *pkt;
+
+            if ((pkt = get_packet()) == NULL) {
+                yyerror("parser: %d: fail to get packet{}\n", __LINE__);
+                return -1;
+            }
+
+            if ((pkt->pk_ip6info = calloc(1, sizeof(struct ip6_info))) == NULL) {
+                yyerror("parser: %d: no memory\n", __LINE__);
+                return -1;
+            }
+            INIT_LIST_HEAD(&pkt->pk_ip6info->ext_list);
+            yydbg("%d: IPv6 header alloced\n", __LINE__);
+        }
+    |   PROTOCOL UDP BCL udp_fields ECL EOS { TRACE; }
+        {
+            TRACE; 
+            struct packet *pkt;
+
+            if ((pkt = get_packet()) == NULL) {
+                yyerror("parser: %d: fail to get packet{}\n", __LINE__);
+                return -1;
+            }
+
+            if ((pkt->pk_udphdr = calloc(1, sizeof(struct udphdr))) == NULL) {
+                yyerror("parser: %d: no memory\n", __LINE__);
+                return -1;
+            }
+            yydbg("%d: UDP header alloced\n", __LINE__);
+        }
+    |   PROTOCOL DHCPV6 BCL dh6_fields ECL EOS { TRACE; }
+        {
+            TRACE; 
+            struct packet *pkt;
+
+            if ((pkt = get_packet()) == NULL) {
+                yyerror("parser: %d: fail to get packet{}\n", __LINE__);
+                return -1;
+            }
+
+            if ((pkt->pk_dh6info = calloc(1, sizeof(struct dh6_info))) == NULL) {
+                yyerror("parser: %d: no memory\n", __LINE__);
+                return -1;
+            }
+            INIT_LIST_HEAD(&pkt->pk_dh6info->opt_list);
+            yydbg("%d: DHCPv6 header alloced\n", __LINE__);
+        }
+    ;
+
+eth_fields:
+        /* empty */ { TRACE; }
+    |   eth_fields eth_field { TRACE; }
+    ;
+
+eth_field:
+        SRCMAC V_MAC EOS
+        {
+            TRACE;
+            struct ethhdr *eth;
+            if ((eth = get_eth_header()) == NULL) {
+                yyerror("parser: %d: fail to get ethhdr{}\n", __LINE__);
+                return -1;
+            }
+            memcpy(eth->h_dest, $2, ETH_ALEN);
+        }
+    |   DSTMAC V_MAC EOS
+        {
+            TRACE;
+            struct ethhdr *eth;
+            if ((eth = get_eth_header()) == NULL) {
+                yyerror("parser: %d: fail to get ethhdr{}\n", __LINE__);
+                return -1;
+            }
+            memcpy(eth->h_source, $2, ETH_ALEN);
+        }
+    |   ETHTYPE V_ETHTYPE EOS
+        { 
+            TRACE;
+            struct ethhdr *eth;
+            if ((eth = get_eth_header()) == NULL) {
+                yyerror("parser: %d: fail to get ethhdr{}\n", __LINE__);
+                return -1;
+            }
+            eth->h_proto = $2;
+        }
+    ;
+
+ipv6_fields:
+        /* empty */ { TRACE; }
+    |   ipv6_fields ipv6_field { TRACE; }
+    ;
+
+ipv6_field:
+        TRAFCLASS V_HEX EOS 
+        {
+            TRACE;
+            struct ip6_info *ip6i;
+            if ((ip6i = get_ip6_info()) == NULL)
+                return -1;
+            ip6i->tc = $2;
+        }
+    |   FLOWLABEL V_HEX EOS 
+        {
+            TRACE;
+            struct ip6_info *ip6i;
+            if ((ip6i = get_ip6_info()) == NULL)
+                return -1;
+            ip6i->flow_id = $2;
+        }
+    |   NEXTHEADER V_IPPROT EOS
+        {
+            TRACE;
+            struct ip6_info *ip6i;
+            if ((ip6i = get_ip6_info()) == NULL)
+                return -1;
+            ip6i->nexthdr = $2;
+        }
+    |   HOPLIMIT V_UINT EOS
+        {
+            TRACE;
+            struct ip6_info *ip6i;
+            if ((ip6i = get_ip6_info()) == NULL)
+                return -1;
+            ip6i->hoplimit = $2;
+        }
+    |   SRCADDR V_ADDR6 EOS
+        {
+            TRACE;
+            struct ip6_info *ip6i;
+            if ((ip6i = get_ip6_info()) == NULL)
+                return -1;
+            ip6i->srcaddr = $2;
+        }
+    |   DSTADDR V_ADDR6 EOS
+        {
+            TRACE;
+            struct ip6_info *ip6i;
+            if ((ip6i = get_ip6_info()) == NULL)
+                return -1;
+            ip6i->srcaddr = $2;
+        }
+    ;
+
+udp_fields:
+        /* empty */ { TRACE; }
+    |   udp_fields udp_field { TRACE; }
+    ;
+
+udp_field:
+        SRCPORT V_PORT EOS
+        {
+            TRACE;
+            struct udphdr *udph;
+            if ((udph = get_udp_header()) == NULL)
+                return -1;
+            udph->source = $2;
+        }
+    |   DSTPORT V_PORT EOS
+        {
+            TRACE;
+            struct udphdr *udph;
+            if ((udph = get_udp_header()) == NULL)
+                return -1;
+            udph->dest = $2;
+        }
+    |   CHKSUM V_HEX EOS
+        {
+            TRACE;
+            struct udphdr *udph;
+            if ((udph = get_udp_header()) == NULL)
+                return -1;
+            udph->check = $2;
+        }
+    ;
+
+dh6_fields:
+        /* empty */
+    |   dh6_fields dh6_field
+        {
+            TRACE;
+        }
+    ;
+
+dh6_field:
+        DH6TYPE V_DH6TYPE EOS
+        {
+            TRACE;
+            struct dh6_info *dh6i;
+            if ((dh6i = get_dhcp6_info()) != 0)
+                return -1;
+
+            dh6i->type = $2;
+        }
+    |   XID V_HEX EOS
+        {
+            TRACE;
+            struct dh6_info *dh6i;
+            if ((dh6i = get_dhcp6_info()) != 0)
+                return -1;
+
+            dh6i->xid = $2;
+        }
+    |   dh6_options { TRACE; }
+    ;
+
+dh6_options:
+        /* empty */
+    |   dh6_options dh6_option { TRACE; }
+    ;
+
+dh6_option:
+        OPTION IANA BCL dh6_iana_fields ECL EOS
+        {
+            TRACE;
+            struct dh6opt_info *opti;
+            if (add_dhcp6_opt_info() != 0)
+                return -1;
+
+            opti->type = DH6OPT_IA_NA;
+            INIT_LIST_HEAD(&opti->opt.iana_list);
+        }
+    |   OPTION SERVID BCL dh6_servid_fields ECL EOS
+        {
+            TRACE;
+            struct dh6opt_info *opti;
+            if (add_dhcp6_opt_info() != 0)
+                return -1;
+            
+            opti->type = DH6OPT_SERVERID;
+        }
+    |   OPTION CLNTID BCL dh6_clntid_fields ECL EOS
+        {
+            TRACE;
+            struct dh6opt_info *opti;
+            if (add_dhcp6_opt_info() != 0)
+                return -1;
+            
+            opti->type = DH6OPT_CLIENTID;
+        }
+    |   OPTION PREFERENCE V_UINT EOS
+        {
+            TRACE;
+            struct dh6opt_info *opti;
+            if (add_dhcp6_opt_info() != 0)
+                return -1;
+            
+            opti->type = DH6OPT_PREFERENCE;
+            opti->opt.preference = $3;
+        }
+    ;
+
+dh6_iana_fields:
+        /* empty */
+    |   dh6_iana_fields dh6_iana_field
+        {
+            TRACE;
+            if (add_dhcp6_ia_info(DH6OPT_IA_NA) != 0)
+                return -1;
+        }
+    ;
+
+
+dh6_iana_field:
+        IAID V_HEX EOS
+        {
+            TRACE;
+            struct dh6ia_info *iai = get_dhcp6_ia_info(DH6OPT_IA_NA);
+            if (iai == NULL)
+                return -1;
+            iai->iaid = $2;
+        }
+    |   T1 V_UINT EOS
+        {
+            TRACE;
+            struct dh6ia_info *iai = get_dhcp6_ia_info(DH6OPT_IA_NA);
+            if (iai == NULL)
+                return -1;
+            iai->t1 = $2;
+        }
+    |   T2 V_UINT EOS
+        {
+            TRACE;
+            struct dh6ia_info *iai = get_dhcp6_ia_info(DH6OPT_IA_NA);
+            if (iai == NULL)
+                return -1;
+            iai->t2 = $2;
+        }
+    |   iana_options
+        {
+            TRACE;
+        }
+    ;
+
+iana_options:
+        /* empty */
+    |   iana_options iana_option
+        {
+            TRACE;
+        }
+    ;
+
+iana_option:
+        OPTION IAADDR BCL ia_addr_fields ECL EOS
+        {
+            TRACE;
+            struct dh6ia_info *iai;
+            struct dh6opt_info *opt_iaaddr;
+
+            if ((iai = get_dhcp6_ia_info(DH6OPT_IA_NA)) == NULL)
+                return -1;
+
+            if ((opt_iaaddr = calloc(1, sizeof(struct dh6opt_info))) == NULL) {
+                yyerror("%d: no memory\n", __LINE__);
+                return -1;
+            }
+            opt_iaaddr->type = DH6OPT_IAADDR;
+            list_add_tail(&opt_iaaddr->node, &iai->opt_list);
+        }
+    |   OPTION STATUSCODE BCL status_code_fields ECL EOS
+        {
+            TRACE;
+            struct dh6ia_info *iai;
+            struct dh6opt_info *opt_status;
+
+            if ((iai = get_dhcp6_ia_info(DH6OPT_IA_NA)) == NULL)
+                return -1;
+
+            if ((opt_status = calloc(1, sizeof(struct dh6opt_info))) == NULL) {
+                yyerror("%d: no memory\n", __LINE__);
+                return -1;
+            }
+            opt_status->type = DH6OPT_STATUS_CODE;
+            list_add_tail(&opt_status->node, &iai->opt_list);
+        }
+    ;
+
+ia_addr_fields:
+        /* empty */
+    |   ia_addr_fields ia_addr_field
+        {
+            TRACE;
+        }
+    ;
+
+ia_addr_field:
+        ADDRESS V_ADDR6 EOS
+        {
+            TRACE;
+            struct dh6opt_info *opti;
+            if ((opti = get_dhcp6_ia_opt(DH6OPT_IA_NA, DH6OPT_IAADDR)) == NULL) {
+                yyerror("%d: fail to get IAADDR\n", __LINE__);
+                return -1;
+            }
+
+            opti->opt.iaaddr.addr = $2;
+        }
+    |   PRFLFT V_UINT EOS
+        {
+            TRACE;
+            struct dh6opt_info *opti;
+            if ((opti = get_dhcp6_ia_opt(DH6OPT_IA_NA, DH6OPT_IAADDR)) == NULL) {
+                yyerror("%d: fail to get IAADDR\n", __LINE__);
+                return -1;
+            }
+
+            opti->opt.iaaddr.prf_lft = $2;
+        }
+    |   VLDLFT V_UINT EOS
+        {
+            TRACE;
+            struct dh6opt_info *opti;
+            if ((opti = get_dhcp6_ia_opt(DH6OPT_IA_NA, DH6OPT_IAADDR)) == NULL) {
+                yyerror("%d: fail to get IAADDR\n", __LINE__);
+                return -1;
+            }
+
+            opti->opt.iaaddr.vld_lft = $2;
+        }
+    ;
+
+status_code_fields:
+        /* empty */
+    |   status_code_fields status_code_field
+        {
+            TRACE;
+        }
+    ;
+
+status_code_field:
+        CODE V_DH6STATUSCODE EOS
+        {
+            TRACE;
+            struct dh6opt_info *opti;
+            if ((opti = get_dhcp6_ia_opt(DH6OPT_IA_NA, DH6OPT_STATUS_CODE)) == NULL) {
+                yyerror("%d: fail to get STATUSCODE\n", __LINE__);
+                return -1;
+            }
+
+            opti->opt.status_code.code = $2;
+        }
+    |   MESSAGE V_STR EOS
+        {
+            TRACE;
+            struct dh6opt_info *opti;
+            if ((opti = get_dhcp6_ia_opt(DH6OPT_IA_NA, DH6OPT_STATUS_CODE)) == NULL) {
+                yyerror("%d: fail to get STATUSCODE\n", __LINE__);
+                return -1;
+            }
+
+            if ((opti->opt.status_code.message = strdup($2)) == NULL) {
+                yyerror("%d: no memory\n", __LINE__);
+                return -1;
+            }
+        }
+    ;
+
+dh6_servid_fields:
+        /* empty */
+    |   dh6_servid_fields dh6_servid_field
+        {
+            TRACE;
+        }
+    ;
+
+dh6_servid_field:
+        DUIDTYPE V_DUIDTYPE EOS
+        {
+            TRACE;
+            struct dh6opt_info *opti;
+            if ((opti = get_dhcp6_opt_info(DH6OPT_SERVERID)) == NULL)
+                return -1;
+            opti->opt.serv_id.type = $2;
+        }
+    |   HWTYPE V_HWTYPE EOS
+        {
+            TRACE;
+            struct dh6opt_info *opti;
+            struct dh6_duid *duid;
+
+            if ((opti = get_dhcp6_opt_info(DH6OPT_SERVERID)) == NULL)
+                return -1;
+            duid = &opti->opt.serv_id;
+
+            switch (duid->type) {
+            case DH6DUID_LLT:
+                duid->duid.llt.hwtype = $2;
+                if ($2 == 1) { /* ethernet */
+                    duid->len = sizeof(2 + 4 + 6);
+                } else {
+                    yyerror("parser: %d: only support ethernet for duid.llt.hwtype\n", __LINE__);
+                    return -1;
+                }
+                break;
+            case DH6DUID_LL:
+                duid->duid.ll.hwtype = $2;
+                if ($2 == 1) { /* ethernet */
+                    duid->len = sizeof(2 + 6);
+                } else {
+                    yyerror("parser: %d: only support ethernet for duid.ll.hwtype\n", __LINE__);
+                    return -1;
+                }
+                break;
+            default:
+                yyerror("parser: %d: only DUID-LLT or DUID-LL has hw-type\n", __LINE__);
+                return -1;
+            }
+        }
+    |   TIME V_HEX EOS
+        {
+            TRACE;
+            struct dh6opt_info *opti;
+            struct dh6_duid *duid;
+
+            if ((opti = get_dhcp6_opt_info(DH6OPT_SERVERID)) == NULL)
+                return -1;
+            duid = &opti->opt.serv_id;
+
+            if (duid->type != DH6DUID_LLT) {
+                yyerror("parser: %d: not DUID-LLT\n", __LINE__);
+                return -1;
+            }
+            duid->duid.llt.time = $2;
+        }
+    |   LLADDR V_MAC EOS
+        {
+            TRACE;
+            struct dh6opt_info *opti;
+            struct dh6_duid *duid;
+
+            if ((opti = get_dhcp6_opt_info(DH6OPT_SERVERID)) == NULL)
+                return -1;
+            duid = &opti->opt.serv_id;
+
+            switch (duid->type) {
+            case DH6DUID_LLT:
+                memcpy(&duid->duid.llt.lladdr, $2, 6);
+                break;
+            case DH6DUID_LL:
+                memcpy(&duid->duid.ll.lladdr, $2, 6);
+                break;
+            default:
+                yyerror("parser: %d: not DUID-LLT or DUID-LL\n", __LINE__);
+                return -1;
+            }
+        }
+    ;
+
+dh6_clntid_fields:
+        /* empty */
+    |   dh6_clntid_fields dh6_clntid_field
+        {
+            TRACE;
+        }
+    ;
+
+dh6_clntid_field:
+        DUIDTYPE V_DUIDTYPE EOS
+        {
+            TRACE;
+            struct dh6opt_info *opti;
+
+            if ((opti = get_dhcp6_opt_info(DH6OPT_SERVERID)) == NULL)
+                return -1;
+
+            opti->opt.clnt_id.type = $2;
+        }
+    |   HWTYPE V_HWTYPE EOS
+        {
+            TRACE;
+            struct dh6opt_info *opti;
+            struct dh6_duid *duid;
+
+            if ((opti = get_dhcp6_opt_info(DH6OPT_SERVERID)) == NULL)
+                return -1;
+            duid = &opti->opt.clnt_id;
+
+            switch (duid->type) {
+            case DH6DUID_LLT:
+                duid->duid.llt.hwtype = $2;
+                if ($2 == 1) { /* ethernet */
+                    duid->len = sizeof(2 + 4 + 6);
+                } else {
+                    yyerror("parser: %d: only support ethernet for duid.llt.hwtype\n", __LINE__);
+                    return -1;
+                }
+                break;
+            case DH6DUID_LL:
+                duid->duid.ll.hwtype = $2;
+                if ($2 == 1) { /* ethernet */
+                    duid->len = sizeof(2 + 6);
+                } else {
+                    yyerror("parser: %d: only support ethernet for duid.ll.hwtype\n", __LINE__);
+                    return -1;
+                }
+                break;
+            default:
+                yyerror("parser: %d: only DUID-LLT or DUID-LL has hw-type\n", __LINE__);
+                return -1;
+            }
+        }
+    |   TIME V_HEX EOS
+        {
+            TRACE;
+            struct dh6opt_info *opti;
+            struct dh6_duid *duid;
+
+            if ((opti = get_dhcp6_opt_info(DH6OPT_SERVERID)) == NULL)
+                return -1;
+            duid = &opti->opt.clnt_id;
+
+            if (duid->type != DH6DUID_LLT) {
+                yyerror("parser: %d: not DUID-LLT\n", __LINE__);
+                return -1;
+            }
+            duid->duid.llt.time = $2;
+        }
+    |   LLADDR V_MAC EOS
+        {
+            TRACE;
+            struct dh6opt_info *opti;
+            struct dh6_duid *duid;
+
+            if ((opti = get_dhcp6_opt_info(DH6OPT_SERVERID)) == NULL)
+                return -1;
+            duid = &opti->opt.clnt_id;
+
+            switch (duid->type) {
+            case DH6DUID_LLT:
+                memcpy(&duid->duid.llt.lladdr, $2, 6);
+                break;
+            case DH6DUID_LL:
+                memcpy(&duid->duid.ll.lladdr, $2, 6);
+                break;
+            default:
+                yyerror("parser: %d: not DUID-LLT or DUID-LL\n", __LINE__);
+                return -1;
+            }
+        }
+    ;
+
+%%
+
+void yydbg(const char *fmt, ...)
+{
+    va_list ap;
+
+    if (!pgen_yy_debug)
+        return;
+
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+}
+
+void yyerror(const char *fmt, ...)
+{
+    va_list ap;
+
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+}
+
+int pgen_conf_parse(char *files[], int nfile, 
+        struct list_head *pkts, struct gene_cf *conf);
+{
+    int i;
+
+    if (!files || nfile == 0 || !pkts || !conf)
+        return EPGEN_PARAM;
+
+    for (i = 0; i < nfile; i++) {
+        if (!files[i])
+            goto errout;
+
+        if ((yyin = fopen(files[i], "rb")) == NULL) {
+            fprintf(stderr, "%s: can not open file %s\n", __FUNCTION__, files[i]);
+            goto errout;
+        }
+
+        if (yyparse() != 0) {
+            fprintf(stderr, "%s: fail to parse file %s\n", __FUNCTION__, files[i]);
+            fclose(yyin);
+            goto errout;
+        }
+
+        fclose(yyin);
+    }
+
+    //list_replace(&cf_pack_list, pack_list);
+    //conf->...
+    return EPGEN_OK;
+
+errout:
+    // TODO: clean up 
+    return EPGEN_CONF;
+}

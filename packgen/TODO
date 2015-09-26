@@ -1,0 +1,21 @@
+1. ether + ipv6 + DHCPv6 for quick model
+2. IPv6 do not support ext header first
+   and DHCPv6 support limited header first
+3. flex&bison for parser
+4. Raw socket & IPv6 socket.
+
+BUG:
+1. DHCPv6 Passing Missing some fields:
+        dhcpv6 ->
+            type 2
+            xid 100
+            iana ->
+                iapd 101010
+                t1 302400
+                t2 483840
+                ia-addr ->
+                    address 3ffe:501:ffff:1110::e7bd
+                    prf-lft 604800
+                    vld-lft 604800
+        ... MISSING ...
+

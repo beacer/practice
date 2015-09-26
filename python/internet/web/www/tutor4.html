@@ -1,0 +1,23 @@
+<html>
+<title>CGI 101</title>
+<body>
+<h1>A second user interaction: tables</h1>
+<hr/>
+<form method=POST action="http://localhost:8080/cgi-bin/tutor4.py">
+    <table>
+        <tr>
+            <th align=right>Enter your name:</th>
+            <td><input type=text name=user /></td>
+        </tr>
+        <tr>
+            <th align=right>Enter your age:</th>
+            <td><input type=text name=age /></td>
+        </tr>
+        <tr>
+            <td colspan=2 align=center ></td>
+            <input type=submit value="Send">
+        </tr>
+    </table>
+</form>
+</body>
+</html>

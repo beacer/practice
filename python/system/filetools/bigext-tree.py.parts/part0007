@@ -1,0 +1,5 @@
+ x: x[key])
+    pprint.pprint(allsizes[:3])
+    pprint.pprint(allsizes[-3:])
+
+

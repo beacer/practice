@@ -1,0 +1,8 @@
+) in os.walk(dirname):
+    if trace: tryprint(thisDir)
+    thisDir = os.path.normpath(thisDir)
+    fixname = os.path.normcase(thisDir)
+    if fixname in visited:
+        continue
+    else:
+        vis

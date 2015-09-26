@@ -1,0 +1,12 @@
+) > 3: trace = int(argv[3])
+
+def tryprint(arg):
+    try:
+        print(arg)
+    except UnicodeEncodeError:
+        print(arg.encode())
+
+visited = set()
+allsizes = []
+
+for (thisDir, subsHere, filesHere

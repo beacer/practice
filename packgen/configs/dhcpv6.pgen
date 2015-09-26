@@ -1,0 +1,60 @@
+option interface "eth0";
+
+packet {
+    protocol ether {
+        src-mac 26:76:7d:ff:e1:6e;
+        dst-mac 00:00:00:00:a2:a2;
+        eth-type ipv6;
+    };
+
+    protocol ipv6 {
+        traffic-class 0x0;
+        flow-label 0x0;
+        next-header udp;
+        hop-limit 64;
+        src-addr fe80::2476:7dff:feff:e16e;
+        dst-addr fe80::200:ff:fe00:a2:a2;
+    };
+
+    protocol udp {
+        src-port dhcp6s;
+        dst-port dhcp6c;
+    };
+
+    protocol dhcpv6 {
+        type Advertise;
+        xid 0x000064;
+        option ia-na {
+            ia-id 0x00018a92;
+            t1 302400;
+            t2 483840;
+
+            option ia-addr {
+                address 3ffe:501:ffff:1110::e7bd;
+                preferred-lifetime 604800;
+                valid-lifetime 604800;
+            };
+
+            option status-code {
+                code Success;
+                message "1 address granted. You may inclue IAADDR in IA option, if you want to provide a hint.";
+            };
+        };
+
+        option server-id {
+            duid-type duid-llt;
+            hw-type ethernet;
+            time 0xc792bf93;
+            ll-addr 24:76:7d:ee:e1:6e;
+        };
+
+        option client-id {
+            duid-type duid-llt;
+            hw-type ethernet;
+            time 0x000493e0;
+            ll-addr 00:00:00:00:a2:a2;
+        };
+
+        option preference 255;
+    };
+};

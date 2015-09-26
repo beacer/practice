@@ -1,0 +1,12 @@
+.*.sw[a-z]
+*~
+lex.yy.c
+y.tab.c
+y.tab.h
+pgen
+tags
+*.out
+*.so
+*.o
+*.a
+filenametags

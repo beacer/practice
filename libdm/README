@@ -1,0 +1,136 @@
+0. Should DM a lib or daemon
+
+   it should be a lib, with API to register DM, ...
+   if we use objects/device.c objects/device_ip.c ...
+   it'll we be DM centrolized ..., 
+   objects should distribute to a lot daemons, like libubus do.
+
+   but we can hanld small set of buildin DMs.
+
+1. DM API
+
+    To support 1-3, we have to use an another internal API.
+    to support local an remote access (exported).
+    And the internal API can be object API directly.
+
+        1. Access local DM  => DM API
+        2. Access remote DM => DM API
+        3. Export local DM for remote access => DM API
+
+    if just support 1, 2, one API layer is OK.
+    if just support 2, 3, one API layer is OK.
+
+    * The KEY point is : is exportd Methods similar with DM API or Internal Object API ?
+      if they are similar why use two seperated APIs ?
+    * How to prevent DM Access from Bus is not local ?
+      for Design 1, it's easy, but for 2 ?  it's a routing issue. why A access B's through C.
+      and acceptable.
+
+    One Possible Deisgn: Both Unified API and RPC using internal API.
+
+       +-----------------------------+
+       |          DM  API            |<-Access Remote ---------+
+       +------------^----------------+                         |
+              Local | Export                                   V
+       +------------v----------------+  Export  +-------+   +-----------+
+       |        Interal API          |<-------->|adapter|<->|Bus Daemon |
+       +-----------------------------+  Remote  +-------+   +-----------+
+       |        DM objects           |
+       +-----------------------------+
+       |        integration          |
+       +-----------------------------+
+
+    Other Possible Deisgn:  RPC based on unified DM API
+
+       +-----------------------------+  Access Remote      +------------+
+       |          DM  API            |<--------+---------->| bus Daemon |
+       |                             |  Export | Remote    |            |
+       +-----------------------------+         V           |            |
+       |        DM objects           |    +---------+      |            |
+       +-----------------------------+    | transfer|<---->|            |
+       |        integration          |    +---------+      +------------+
+       +-----------------------------+
+
+Q&A
+======
+
+Q: Why not use config file to describe the definitions objects/parameters ? like,
+
+    object PATH {
+        type "simple" | "multi-ins" | "instance" ; # MUST
+        writable "yes" | "no" ; # optional, default is no
+        parameter NAME {
+            type TYPE;
+        };
+    };
+
+A: We use the machanism like kernel object netdev/sysctl/proc-fs/.../almost all "C class"
+   When implemment an class, we define the class directly in C and implment VFT.
+   That's more easier, no config file parsing needed, every thing is there in single file.
+   We also use __constructor__ function to load object automatically, when adding new objects
+   in new C file, no need to change any other files.
+
+Q: Do we need config file to describe object param values and instances ?
+A: Yes. Two choice: 
+   1) unified config file(s)
+   2) each object to load param values and instances.
+   We choose 1).
+
+   And one thing need to handle, the definition in config has no realed class definition in C, 
+   That's not acceptable, because an object with no VFT is useless.
+
+Q: Do we need unified API to access both local and remote DM ? Do we need local DM access ?
+A: what ever we support local DM access by DM-API or internal API/IPC, 
+   exported DM (access from bus) should go DM-API instead of internal API/IPC.
+   Otherwise why we use same methods, why not self defined methods (ip_addr_add) ? why DM exist ? 
+   Then the architecture is not DM driven, more free, not common methods and no common DM definitions.
+   That's another way to implement a system which is not  data model driven.
+
+   If we do use DM driven architecture, the question if to support local DM access by 
+   unified DM-API or not, is not that important, we can support, 
+   user may not use (use internal API/IPC).
+
+
+Q: Why NOT multiple components ?
+A: It's hard to make the decision.
+   Basically it's a container of objects, if hide or do not use component,
+   means every process has only one (glabal) container (component).
+   By using component, multiple objects tree can exist ? but do we really need it ?
+   The API need one more argument, user have to keep the component somewhere.
+   (DO NOT USE Global var pls).
+   So let's use one global component, hide it to user in API,
+   and but implement component internally, in case we really need multi-comp someday.
+
+Q: why data-model instead of using ubus object-method directly ?
+A: DM have similar class and sharing methods, it's not make sence let every component
+   implement their own object methods.
+
+Q: For ojects tree in component, do we really need maintain a tree ? 
+   since there is already a PATH tree in ubusd. 
+A: 1. the tree in ubus is AVL binary TREE! Although it still support wildcard lookup.
+   2. ubusd's path has no idea of parent/children, object/param/instance, and level.
+      So for example, ubusd's tree do not support one level lookup.
+      It's not a good idea to get all subtree objects and filter ?
+   3. ubus is used for external (remote) dm access, not for local.
+
+Q: Why use Hash then ? why not instead of AVL tree.
+A: Use Hash to locate the object ASAP, then do the methods on it (e.g., lookup children)
+   AVL is baniry tree, same reason as abover.
+   Further more, AVL is faster for frequence instert/remove operation.
+   the objects in component is stable lookup and operation is more then
+   insert/delete, so we use hash.
+
+Q: Path based API vs Object/Param based API ?
+   get_names(paths...)  , set_params(paths, ...)
+   lookup(paths, **obj) , set_param(obj...)
+A: path-based APIs are more easly for user, otherwise, user have to lookup then operate.
+   see ubus/example/client.c , ubus_lookup() + ubus_invoke()
+   datamodle is a DM abs, make it easier to use and close to DM definition it self.
+
+Q: why not support timeout & async version of DM API ?
+A: 1. it means let the user to choose a time.
+      but most time, the user still cannot decide how many time, for instance, IP address 
+      or VLAN can be set (by remote comp) in system.
+      The all user will use something like 3000ms, untill error happened when testing ?
+   2. sync version with default timeout is enough for most cases and async is enough for others.
+   3. how about local DM, use timout to wait backend ?

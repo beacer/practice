@@ -1,0 +1,5 @@
+       try:
+                bytesize = os.path.getsize(fullname)
+                linesize = sum(+1 for line in open(fullname, 'rb'))
+            except Exception:
+                print('error', exc_in

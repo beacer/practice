@@ -1,0 +1,7 @@
+fo[0])
+            else:
+                allsizes.append((bytesize, linesize, fullname))
+
+for (title, key) in [('bytes', 0), ('lines', 1)]:
+    print('\nBy %s...' % title)
+    allsizes.sort(key=lambda

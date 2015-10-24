@@ -1,0 +1,10 @@
+.*.sw[a-z]
+*.out
+*.so
+*.a
+*.d
+bsort
+qsort
+tags
+cscope.*
+filenametags

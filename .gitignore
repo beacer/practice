@@ -3,8 +3,9 @@
 *.so
 *.a
 *.d
-bsort
-qsort
+*.o
+sort
+sort
 tags
 cscope.*
 filenametags

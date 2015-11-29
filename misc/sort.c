@@ -44,35 +44,25 @@ static int bubble_sort(int arr[], size_t n)
 
 static int quick_sort(int arr[], size_t n)
 {
-    int i, j;
+    int i, l;
 
-    if (!arr || n == 0)
+    if (!arr)
         return -1;
-
-    if (n == 1)
+    if (n <= 1)
         return 0;
 
-    i = rand() % n;
-    swap(arr, 0, i);
-    for (i = 1; i < n; i++) {
+    swap(arr, 0, rand() % n);
+    l = 0;
+    for (i = l + 1; i < n; i++) {
         if (arr[i] <= arr[0])
-            continue;
-
-        for (j = i + 1; j < n; j++) {
-            if (arr[j] <= arr[0]) {
-                swap(arr, i, j);
-                break;
-            }
-        }
-        if (j == n)
-            break;
+            swap(arr, ++l, i);
     }
-    swap(arr, 0, i - 1);
+    swap(arr, 0, l);
 
-    quick_sort(arr, i - 1);
-    quick_sort(arr + i, n - i);
-    return 0;
+    quick_sort(arr, l);
+    quick_sort(arr + l + 1, n - l - 1);
 }
+
 
 /*
  * 'radix sort' (or 'card sort') is better solution for bucket sort.

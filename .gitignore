@@ -9,3 +9,12 @@ sort
 tags
 cscope.*
 filenametags
+
+# ignore temp files for .ko
+*.cmd
+.tmp_versions/
+Module.symvers
+modules.order
+*.ko
+*.mod.c
+

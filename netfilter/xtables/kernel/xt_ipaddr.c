@@ -16,18 +16,13 @@ static bool ipaddr_mt(const struct sk_buff *skb, struct xt_action_param *param)
     const struct xt_ipaddr_mtinfo *info = param->matchinfo; /* from userspace */
     const struct ipv6hdr *ip6h = ipv6_hdr(skb);
 
-    /*
-    pr_info("xt_ipaddr: IN=%s OUT=%s SRC=" NIP6_FMT " DST=" NIP6_FMT " "
-            "IPSRC=" NIP6_FMT " IPDST=" NIP6_FMT "\n",
+    /* %pI6 is newer then NIP6_FMT + NIP6 */
+    pr_info("xt_ipaddr: IN=%s OUT=%s SRC=%pI6 DST=%pI6 "
+            "IPSRC=%pI6 IPDST=%pI6\n",
             param->in ? param->in->name : "",
             param->out ? param->out->name : "",
-            NIP6(ip6h->saddr), NIP6(ip6h->daddr),
-            NIP6(info->src), NIP6(info->dst));
-            */
-
-    pr_info("xt_ipaddr: IN=%s OUT=%s",
-            param->in ? param->in->name : "",
-            param->out ? param->out->name : "");
+            &ip6h->saddr, &ip6h->daddr,
+            &info->src.in6, &info->dst.in6);
 
     if (info->flags & XT_IPADDR_SRC) {
         if ((ipv6_addr_cmp(&ip6h->saddr, &info->src.in6) != 0) 
@@ -71,9 +66,9 @@ static int ipaddr_mt_check(const struct xt_mtchk_param *param)
 
 static void ipaddr_mt_destroy(const struct xt_mtdtor_param *param)
 {
-    //const struct xt_ipaddr_mtinfo *info = param->matchinfo;
+    const struct xt_ipaddr_mtinfo *info = param->matchinfo;
 
-    //pr_info("match for addr " NIP6_FMT " removed\n", NIP6(info->src.ip6));
+    pr_info("match for addr %pI6 removed\n", &info->src.in6);
     pr_info("match for addr removed\n");
     return;
 }

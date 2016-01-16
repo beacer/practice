@@ -1,8 +1,12 @@
 #ifndef _LINUX_NETFILTER_XT_IPADDR_H
 #define _LINUX_NETFILTER_XT_IPADDR_H 1
 #include <linux/netfilter.h>
+#if defined(KERNEL)
 #include <linux/ip.h>
 #include <linux/ipv6.h>
+#else
+#include <netinet/in.h>
+#endif
 
 enum {
     XT_IPADDR_SRC       = 0x1<<0,

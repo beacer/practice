@@ -3,6 +3,8 @@
 MODULES_DIR = /lib/modules/$(shell uname -r)
 KERNEL_DIR = ${MODULES_DIR}/build  # kernel source tree for build
 
+EXTRA_CFLAGS = -DKERNEL
+EXTRA_CFLAGS += -I$(PWD)/../include
 obj-m += xt_ipaddr.o
 
 all:

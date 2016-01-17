@@ -20,4 +20,8 @@ struct xt_ipaddr_mtinfo {
     __u8 flags;
 };
 
+#ifndef NELEMS
+#   define NELEMS(a)    (sizeof(a) / sizeof((a)[0]))
+#endif
+
 #endif /* _LINUX_NETFILTER_XT_IPADDR_H */

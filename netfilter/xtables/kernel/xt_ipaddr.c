@@ -26,7 +26,7 @@ static bool ipaddr_mt(const struct sk_buff *skb, struct xt_action_param *param)
 
     if (info->flags & XT_IPADDR_SRC) {
         if ((ipv6_addr_cmp(&ip6h->saddr, &info->src.in6) != 0) 
-                || (info->flags & XT_IPADDR_SRC_INV)) {
+                && (info->flags & XT_IPADDR_SRC_INV)) {
             pr_notice("src IP - no match\n");
             return false;
         }
@@ -34,7 +34,7 @@ static bool ipaddr_mt(const struct sk_buff *skb, struct xt_action_param *param)
 
     if (info->flags & XT_IPADDR_DST) {
         if ((ipv6_addr_cmp(&ip6h->daddr, &info->dst.in6) != 0) 
-                || (info->flags & XT_IPADDR_DST_INV)) {
+                && (info->flags & XT_IPADDR_DST_INV)) {
             pr_notice("dst IP - no match\n");
             return false;
         }
@@ -69,7 +69,6 @@ static void ipaddr_mt_destroy(const struct xt_mtdtor_param *param)
     const struct xt_ipaddr_mtinfo *info = param->matchinfo;
 
     pr_info("match for addr %pI6 removed\n", &info->src.in6);
-    pr_info("match for addr removed\n");
     return;
 }
 

@@ -10,7 +10,7 @@ MODULE_AUTHOR("beacer <beacer@example.com>");
 MODULE_DESCRIPTION("xtables: match source/destination address");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("ip6t_ipaddr");
-MODULE_ALIAS("ip4t_ipaddr");
+MODULE_ALIAS("ipt_ipaddr");
 
 static bool ipaddr_mt6(const struct sk_buff *skb, struct xt_action_param *param)
 {
@@ -160,7 +160,7 @@ static int __init ipaddr_mt_init(void)
 static void __exit ipaddr_mt_exit(void)
 {
     pr_info("xt_ipaddr exit\n");
-    return xt_unregister_matches(ipaddr_mt_reg, ARRAY_SIZE(ipaddr_mt_reg));
+    xt_unregister_matches(ipaddr_mt_reg, ARRAY_SIZE(ipaddr_mt_reg));
 }
 
 module_init(ipaddr_mt_init);

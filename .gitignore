@@ -18,3 +18,8 @@ modules.order
 *.ko
 *.mod.c
 
+# idea files
+*.iml
+.idea/
+out/
+*.class
